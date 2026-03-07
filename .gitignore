@@ -50,6 +50,8 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
-
+publish/*
+bin/*
+obj/*
 # debug information files
 *.dwo
