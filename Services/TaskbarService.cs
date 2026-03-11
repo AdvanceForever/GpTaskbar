@@ -9,11 +9,10 @@ namespace GpTaskbar.Services
     public class TaskbarService : IDisposable
     {
         private Form? _floatingForm;
-        private Label? _floatingLabel; 
+        private List<Label> _stockLabels = new List<Label>();
         private System.Windows.Forms.Timer? _topmostTimer;
         private ConfigService _configService;
-        private AppConfig _config;
-        private string _currentDisplayText = "";
+        private AppConfig _config; 
         private bool _isDragging = false;
         private Point _dragStartPosition;
         private Point _formStartPosition;
@@ -33,7 +32,7 @@ namespace GpTaskbar.Services
             {
                 FormBorderStyle = FormBorderStyle.None,
                 BackColor = Color.FromArgb(45, 45, 48), // 深色背景匹配Windows 11主题
-                Size = new Size(250, 35),
+                Size = new Size(250, 35), // 初始大小，会根据股票数量调整
                 StartPosition = FormStartPosition.Manual,
                 TopMost = true,
                 ShowInTaskbar = false,
@@ -41,33 +40,12 @@ namespace GpTaskbar.Services
                 AllowTransparency = true
             };
 
-            _floatingLabel = new Label
-            {
-                Text = "加载中...",
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleCenter,
-                Font = new Font("Segoe UI", 10f, FontStyle.Bold),
-                ForeColor = Color.White,
-                BackColor = Color.FromArgb(45, 45, 48), // 设置与窗体相同的背景色
-                Cursor = Cursors.Hand // 添加手型光标
-            };
-
-            _floatingForm.Controls.Add(_floatingLabel);
-            
-            // 添加鼠标事件
+            // 添加窗体鼠标事件
             _floatingForm.MouseEnter += OnMouseEnter;
             _floatingForm.MouseLeave += OnMouseLeave;
-           // _floatingForm.Click += OnClick;
             _floatingForm.MouseDown += OnMouseDown;
             _floatingForm.MouseMove += OnMouseMove;
             _floatingForm.MouseUp += OnMouseUp;
-            
-            _floatingLabel.MouseEnter += OnMouseEnter;
-            _floatingLabel.MouseLeave += OnMouseLeave;
-           // _floatingLabel.Click += OnClick;
-            _floatingLabel.MouseDown += OnMouseDown;
-            _floatingLabel.MouseMove += OnMouseMove;
-            _floatingLabel.MouseUp += OnMouseUp;
 
             PositionFloatingForm();
         }
@@ -84,7 +62,24 @@ namespace GpTaskbar.Services
         {
             if (_floatingForm != null && !_floatingForm.IsDisposed)
             {
-                _floatingForm.Opacity = 0.6;
+                // 检查鼠标是否仍在窗体或任何标签上
+                var mousePos = Control.MousePosition;
+                var formBounds = _floatingForm.RectangleToScreen(_floatingForm.ClientRectangle);
+                
+                bool isMouseOverAnyLabel = false;
+                foreach (var label in _stockLabels)
+                {
+                    if (label.Bounds.Contains(label.PointToClient(mousePos)))
+                    {
+                        isMouseOverAnyLabel = true;
+                        break;
+                    }
+                }
+                
+                if (!isMouseOverAnyLabel && !formBounds.Contains(mousePos))
+                {
+                    _floatingForm.Opacity = 0.6;
+                }
             }
         }
 
@@ -212,43 +207,72 @@ namespace GpTaskbar.Services
 
         public void UpdateStockDisplay(List<Models.StockData> stocks)
         {
-            if (_floatingLabel == null || _floatingLabel.IsDisposed || stocks.Count == 0) return;
+            if (_floatingForm == null || _floatingForm.IsDisposed || stocks.Count == 0) return;
             
-            // 根据配置选项生成显示文本
-            var displayText = stocks[0].GetDisplayText(
-                _config.ShowSymbol,
-                _config.ShowName,
-                _config.ShowPrice,
-                _config.ShowChangePercent,
-                _config.ShowChange
-            );
+            // 清空现有标签
+            _floatingForm.Controls.Clear();
+            _stockLabels.Clear();
             
-            if (stocks.Count > 1)
+            // 计算窗体大小
+            int maxWidth = 150; // 最小宽度
+            int labelHeight = 20; // 每个标签的高度
+            int padding = 1; // 内边距
+            
+            // 为每只股票创建单独的Label
+            for (int i = 0; i < stocks.Count; i++)
             {
-                displayText += " | " + stocks[1].GetDisplayText(
+                var stock = stocks[i];
+                var displayText = stock.GetDisplayText(
                     _config.ShowSymbol,
                     _config.ShowName,
                     _config.ShowPrice,
                     _config.ShowChangePercent,
                     _config.ShowChange
                 );
+                
+                // 计算文本宽度以调整窗体宽度
+                var textSize = TextRenderer.MeasureText(displayText, new Font("Segoe UI", 9f, FontStyle.Bold));
+                maxWidth = Math.Max(maxWidth, textSize.Width + 5); // 增加边距
+                
+                var stockLabel = new Label
+                {
+                    Text = displayText,
+                    Location = new Point(padding, i * labelHeight ),
+                    Size = new Size(maxWidth - padding , labelHeight),
+                    TextAlign = ContentAlignment.MiddleLeft,
+                    Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                    BackColor = Color.FromArgb(45, 45, 48),
+                    Cursor = Cursors.Hand,
+                    Padding = new Padding(2, 0, 2, 0)
+                };
+                
+                // 根据股票涨跌设置颜色
+                if (!stock.IsRising)
+                {
+                    stockLabel.ForeColor = Color.FromArgb(76, 175, 80); // 绿色
+                }
+                else
+                {
+                    stockLabel.ForeColor = Color.FromArgb(244, 67, 54); // 红色
+                }
+                
+                // 添加鼠标事件
+                stockLabel.MouseEnter += OnMouseEnter;
+                stockLabel.MouseLeave += OnMouseLeave;
+                stockLabel.MouseDown += OnMouseDown;
+                stockLabel.MouseMove += OnMouseMove;
+                stockLabel.MouseUp += OnMouseUp;
+                
+                _stockLabels.Add(stockLabel);
+                _floatingForm.Controls.Add(stockLabel);
             }
             
-            _currentDisplayText = displayText;
-            _floatingLabel.Text = displayText;
-            
-            // 根据涨跌设置颜色
-            if (!stocks[0].IsRising)
-            {
-                _floatingLabel.ForeColor = Color.FromArgb(76, 175, 80); // 绿色
-            }
-            else
-            {
-                _floatingLabel.ForeColor = Color.FromArgb(244, 67, 54); // 红色
-            }
+            // 动态调整窗体大小
+            int totalHeight = stocks.Count * labelHeight  ;
+            _floatingForm.Size = new Size(maxWidth, totalHeight);
 
             // 确保窗体可见
-            if (_floatingForm != null && !_floatingForm.Visible)
+            if (!_floatingForm.Visible)
             {
                 _floatingForm.Show();
             }
