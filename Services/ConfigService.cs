@@ -18,6 +18,12 @@ namespace GpTaskbar.Services
         public bool ShowPrice { get; set; } = true;     // 显示股票价格
         public bool ShowChangePercent { get; set; } = true; // 显示涨跌幅
         public bool ShowChange { get; set; } = true;    // 显示涨跌差价
+        
+        // 新增配置选项
+        public bool AutoStartup { get; set; } = false;  // 开机自启
+        public string DisplayStartTime { get; set; } = "09:12"; // 显示开始时间
+        public string DisplayEndTime { get; set; } = "15:10";   // 显示结束时间
+        public bool EnableDisplayTimeRange { get; set; } = false; // 启用时间段控制
     }
 
     public class ConfigService

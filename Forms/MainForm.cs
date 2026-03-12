@@ -13,7 +13,9 @@ namespace GpTaskbar.Forms
         private readonly TaskbarService _taskbarService;
         private NotifyIcon? _notifyIcon;
         private System.Windows.Forms.Timer? _refreshTimer;
+        private System.Windows.Forms.Timer? _displayTimer;
         private AppConfig _config;
+        private bool _isDisplaying = false;
 
         public MainForm()
         {
@@ -57,17 +59,25 @@ namespace GpTaskbar.Forms
             };
             
             _refreshTimer.Tick += async (s, e) => await RefreshStockData();
-            _refreshTimer.Start();
             
-            // 立即获取一次数据
-            _ = RefreshStockData();
+            // 显示时间段控制定时器
+            _displayTimer = new System.Windows.Forms.Timer
+            {
+                Interval = 60000 // 每分钟检查一次
+            };
+            _displayTimer.Tick += (s, e) => CheckDisplayTime();
+            _displayTimer.Start();
+            
+            // 初始检查显示状态
+            CheckDisplayTime();
         }
 
         private async Task RefreshStockData()
         {
             try
             {
-                if (_config.StockSymbols.Count == 0) return;
+                // 只有在显示状态下才获取股票数据
+                if (!_isDisplaying || _config.StockSymbols.Count == 0) return;
 
                 var stocks = await _stockService.GetMultipleStocksAsync(_config.StockSymbols);
                 UpdateNotifyIconText(stocks);
@@ -80,6 +90,75 @@ namespace GpTaskbar.Forms
                     _configForm.SetErrorText($"获取股票数据失败: {ex.Message}");
                 }
             }
+        }
+
+        private void CheckDisplayTime()
+        {
+            if (!_config.EnableDisplayTimeRange)
+            {
+                // 如果未启用时间段控制，始终显示
+                if (!_isDisplaying)
+                {
+                    ShowFloatingWindow();
+                }
+                return;
+            }
+
+            var now = DateTime.Now;
+            var currentTime = now.TimeOfDay;
+            
+            if (TimeSpan.TryParseExact(_config.DisplayStartTime, "hh\\:mm", null, out var startTime) &&
+                TimeSpan.TryParseExact(_config.DisplayEndTime, "hh\\:mm", null, out var endTime))
+            {
+                bool shouldDisplay = currentTime >= startTime && currentTime <= endTime;
+                
+                if (shouldDisplay && !_isDisplaying)
+                {
+                    // 在显示时间段内，显示浮动窗口
+                    ShowFloatingWindow();
+                }
+                else if (!shouldDisplay && _isDisplaying)
+                {
+                    // 在显示时间段外，隐藏浮动窗口
+                    HideFloatingWindow();
+                }
+                else if (!_isDisplaying && currentTime < startTime)
+                {
+                    // 当前时间早于开始时间，计算延迟时间并设置定时器
+                    var delay = (startTime - currentTime).TotalMilliseconds;
+                    if (delay > 0)
+                    {
+                        System.Threading.Tasks.Task.Delay(TimeSpan.FromMilliseconds(delay))
+                            .ContinueWith(_ => 
+                            {
+                                if (this.InvokeRequired)
+                                {
+                                    this.Invoke(new Action(() => ShowFloatingWindow()));
+                                }
+                                else
+                                {
+                                    ShowFloatingWindow();
+                                }
+                            });
+                    }
+                }
+            }
+        }
+
+        private void ShowFloatingWindow()
+        {
+            _isDisplaying = true;
+            _taskbarService.Show();
+            _refreshTimer?.Start();
+            // 立即获取一次数据
+            _ = RefreshStockData();
+        }
+
+        private void HideFloatingWindow()
+        {
+            _isDisplaying = false;
+            _taskbarService.Hide();
+            _refreshTimer?.Stop();
         }
 
         private void UpdateNotifyIconText(List<StockData> stocks)
@@ -116,7 +195,9 @@ namespace GpTaskbar.Forms
                 _config = _configForm.GetUpdatedConfig();
                 if (_refreshTimer != null)
                     _refreshTimer.Interval = _config.RefreshInterval * 1000;
-                _ = RefreshStockData();
+                
+                // 重新检查显示状态
+                CheckDisplayTime();
             }
             
             // 恢复定时置顶
@@ -152,6 +233,8 @@ namespace GpTaskbar.Forms
                 }
                 _refreshTimer?.Stop();
                 _refreshTimer?.Dispose();
+                _displayTimer?.Stop();
+                _displayTimer?.Dispose();
             }
             
             base.OnFormClosing(e);
